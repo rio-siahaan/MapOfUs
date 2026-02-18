@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   MapContainer,
@@ -26,12 +26,11 @@ const fixLeafletIcon = () => {
     iconRetinaUrl:
       "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
     // iconUrl:
-      // "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png",
-    iconUrl:
-      "/location.png",
+    // "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png",
+    iconUrl: "/location.png",
     shadowUrl:
       "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
-    iconSize: [35,35],
+    iconSize: [35, 35],
   });
 };
 
@@ -82,6 +81,17 @@ export default function Map({ interactive = true }: { interactive?: boolean }) {
   const supabase = createClient();
   const router = useRouter();
 
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<
+    { display_name: string; lat: string; lon: string }[]
+  >([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+
+  // Debounced search — fires 800ms after user stops typing
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     fixLeafletIcon();
     fetchMemories();
@@ -131,7 +141,7 @@ export default function Map({ interactive = true }: { interactive?: boolean }) {
     if (!interactive) return;
 
     if (!user) {
-      router.push('/auth')
+      router.push("/auth");
       return;
     }
     // Set temporary marker at clicked location
@@ -154,6 +164,44 @@ export default function Map({ interactive = true }: { interactive?: boolean }) {
     await supabase.auth.signOut();
     setUser(null);
     window.location.href = "/";
+  };
+
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      setShowResults(false);
+      return;
+    }
+
+    setIsSearching(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchQuery)}&format=json&limit=5`,
+          { headers: { "Accept-Language": "id,en" } },
+        );
+        const data = await res.json();
+        setSearchResults(data);
+        setShowResults(true);
+      } catch (err) {
+        console.error("Geocoding error:", err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 800);
+
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchQuery]);
+
+  const handleSelectResult = (lat: string, lon: string) => {
+    setUserLocation([parseFloat(lat), parseFloat(lon)]);
+    setShowResults(false);
+    setSearchQuery("");
+    setSearchResults([]);
   };
 
   if (!userLocation) {
@@ -183,7 +231,122 @@ export default function Map({ interactive = true }: { interactive?: boolean }) {
       <div
         className={`relative w-full h-screen transition-all duration-300 ${isAuthModalOpen ? "blur-sm pointer-events-none" : ""}`}
       >
-        {/* Random Memorfy Button */}
+        {/* Location Search - Top Left */}
+        {interactive && (
+          <div className="absolute z-[1000] top-4 left-4 w-72">
+            <div className="relative">
+              {/* Search icon */}
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                {isSearching ? (
+                  <svg
+                    className="w-4 h-4 text-purple-400 animate-spin"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                    />
+                  </svg>
+                ) : (
+                  <svg
+                    className="w-4 h-4 text-zinc-400"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
+                  </svg>
+                )}
+              </div>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onBlur={() => setTimeout(() => setShowResults(false), 200)}
+                onFocus={() => searchResults.length > 0 && setShowResults(true)}
+                placeholder="Cari tempat atau daerah..."
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm
+                           bg-black/70 backdrop-blur-md text-white
+                           placeholder:text-zinc-400
+                           border border-white/10
+                           focus:outline-none focus:border-purple-500/60
+                           transition-all duration-200"
+              />
+              {/* Clear button */}
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition-colors"
+                >
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
+
+            {/* Results Dropdown */}
+            {showResults && searchResults.length > 0 && (
+              <div
+                className="mt-2 rounded-xl overflow-hidden
+                              bg-black/80 backdrop-blur-md
+                              border border-white/10
+                              shadow-[0_0_20px_rgba(0,0,0,0.4)]"
+              >
+                {searchResults.map((result, i) => (
+                  <button
+                    key={i}
+                    onMouseDown={() =>
+                      handleSelectResult(result.lat, result.lon)
+                    }
+                    className="w-full text-left px-4 py-3 text-sm text-zinc-200
+                               hover:bg-purple-600/30 transition-colors duration-150
+                               border-b border-white/5 last:border-0
+                               cursor-pointer"
+                  >
+                    <span className="line-clamp-2">{result.display_name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {showResults && searchResults.length === 0 && !isSearching && (
+              <div
+                className="mt-2 px-4 py-3 rounded-xl text-sm text-zinc-400
+                              bg-black/70 backdrop-blur-md border border-white/10"
+              >
+                Tempat tidak ditemukan
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Random Memory Button */}
         {markers.length > 0 && (
           <div className="absolute z-[1000] bottom-6 left-1/2 transform -translate-x-1/2">
             <button
